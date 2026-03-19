@@ -40,5 +40,3 @@ next-env.d.ts
 logs
 *.log
 
-# cursor
-.cursor

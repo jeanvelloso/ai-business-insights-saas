@@ -34,16 +34,16 @@ O sistema foi construído seguindo os padrões mais modernos de desenvolvimento 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                    CAMADA DE APRESENTAÇÃO                       │
-│  Next.js 16 (App Router) + React 19 + TypeScript + Tailwind 4   │
+│  Next.js 16 (App Router) + React 19 + TypeScript + Tailwind 4 │
 ├─────────────────────────────────────────────────────────────────┤
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐           │
-│  │   Zustand    │  │  TanStack    │  │   XState     │           │
-│  │   Stores     │  │    Query     │  │  Machines    │           │
-│  │              │  │              │  │              │           │
-│  │ • authStore  │  │ • Queries    │  │ • onboarding │           │
-│  │ • workspace  │  │ • Mutations  │  │ • tileGen    │           │
-│  │ • uiStore    │  │ • Cache      │  │ • tileChat   │           │
-│  └──────────────┘  └──────────────┘  └──────────────┘           │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐        │
+│  │   Zustand    │  │ TanStack    │  │   XState     │        │
+│  │   Stores     │  │   Query     │  │  Machines    │        │
+│  │              │  │             │  │              │        │
+│  │ • authStore  │  │ • Queries   │  │ • onboarding │        │
+│  │ • workspace  │  │ • Mutations │  │ • tileGen    │        │
+│  │ • uiStore    │  │ • Cache     │  │ • tileChat   │        │
+│  └──────────────┘  └──────────────┘  └──────────────┘        │
 └─────────────────────────────────────────────────────────────────┘
                             │
                             │ HTTP/API Requests

@@ -13,20 +13,23 @@ import type { AdeAppearanceTokens } from "@/lib/ade-theme";
 interface AdminShellAdeProps {
   // sidebar prop removed
   header?: ReactNode; // Keeping header prop optional if we want to pass something custom or legacy
+  navigation?: ReactNode; // New prop for Sidebar/Navigation
   children: ReactNode;
   appearance: AdeAppearanceTokens;
   // New props for Top Header
-  // New props for Top Header
   onOpenWorkspaceDetail?: () => void;
+  onDeleteWorkspace?: (workspaceId: string) => void;
   onSetSpecificColor?: (color: string) => void;
 }
 
 export function AdminShellAde({
   // sidebar, removed
   header,
+  navigation,
   children,
   appearance,
   onOpenWorkspaceDetail,
+  onDeleteWorkspace,
   onSetSpecificColor
 }: AdminShellAdeProps) {
   // Use lazy initialization to avoid self-reference or hydration issues
@@ -45,33 +48,40 @@ export function AdminShellAde({
 
   return (
     <div
-      className="flex h-screen overflow-hidden flex-col transition-colors duration-300"
+      className="flex h-screen overflow-hidden transition-colors duration-300"
       style={{
-        backgroundColor: "transparent", // Deixa o body controlar a cor de fundo
+        backgroundColor: appearance.baseColor || "white",
         color: appearance.textColor,
       }}
     >
       <AuthSync />
-      {/* Top Header */}
-      <AdminTopHeader
-        appearance={appearance}
-        onOpenSaaSLimits={openSaaSLimits}
-        onOpenWorkspaceDetail={onOpenWorkspaceDetail}
-        onSetSpecificColor={onSetSpecificColor}
-      />
+      
+      {/* Desktop Sidebar / Mobile Floating Menu */}
+      {navigation}
 
-      {/* Main Content */}
-      <main
-        className="flex-1 overflow-y-auto"
-        style={{ backgroundColor: "transparent" }}
-      >
-        <div
-          className="container mx-auto min-h-full px-6 pb-8"
-          style={{ color: appearance.textColor }}
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden relative">
+        {/* Top Header */}
+        <AdminTopHeader
+          appearance={appearance}
+          onOpenSaaSLimits={openSaaSLimits}
+          onOpenWorkspaceDetail={onOpenWorkspaceDetail}
+          onDeleteWorkspace={onDeleteWorkspace}
+          onSetSpecificColor={onSetSpecificColor}
+        />
+
+        {/* Main Content */}
+        <main
+          className="flex-1 overflow-y-auto"
+          style={{ backgroundColor: "transparent" }}
         >
-          {children}
-        </div>
-      </main>
+          <div
+            className="container mx-auto min-h-full px-6 pb-24 md:pb-8"
+            style={{ color: appearance.textColor }}
+          >
+            {children}
+          </div>
+        </main>
+      </div>
 
       {/* Modals */}
       <SaaSLimitsModal
