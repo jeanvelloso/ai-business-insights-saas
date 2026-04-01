@@ -15,6 +15,7 @@ const PLANS: Array<Pick<PlanDocument, "planId" | "limits">> = [
       regenerationsCount: 10,
       assetsCount: 0,
       tokensUsed: 3000,
+      creditsTotal: 200,
     } satisfies UsageLimits,
   },
   {
@@ -29,6 +30,7 @@ const PLANS: Array<Pick<PlanDocument, "planId" | "limits">> = [
       regenerationsCount: 2000,
       assetsCount: 10000,
       tokensUsed: 1_000_000,
+      creditsTotal: 10000,
     } satisfies UsageLimits,
   },
   {
@@ -43,6 +45,7 @@ const PLANS: Array<Pick<PlanDocument, "planId" | "limits">> = [
       regenerationsCount: 100000,
       assetsCount: 100000,
       tokensUsed: 100_000_000,
+      creditsTotal: 1000000,
     } satisfies UsageLimits,
   },
 ];

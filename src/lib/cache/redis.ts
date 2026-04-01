@@ -4,7 +4,7 @@
  */
 
 import { kv } from "@vercel/kv";
-import { Redis } from "@upstash/redis/cloudflare";
+import { Redis } from "@upstash/redis";
 
 type CacheImplementation = "vercel" | "upstash" | null;
 
