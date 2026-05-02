@@ -5,34 +5,104 @@ import {
     LayoutGrid, 
     Users, 
     FileText, 
-    FolderOpen 
+    FolderOpen,
+    Gavel,
+    PieChart,
+    BarChart3,
+    Library,
+    Trophy,
+    Target,
+    Shapes,
+    Shield,
+    Truck,
+    ClipboardList,
+    Map as MapIcon,
+    Layout,
+    ShoppingBag,
+    Star,
+    Sparkles
 } from "lucide-react";
+import { FaGavel } from "react-icons/fa";
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
 
-export type NavTab = "library" | "arcs" | "characters" | "notes" | "files";
+export type NavTab = "library" | "ranking" | "arcs" | "characters" | "notes" | "files" | "logistics" | "layout" | "store" | "clients" | "staff";
 
 interface AdminNavigationProps {
     activeTab: NavTab;
     onTabChange: (tab: NavTab) => void;
+    templateId?: string;
+    onSwitchToChat?: () => void;
 }
 
-const navItems = [
-    { id: "library", label: "Library", icon: BookOpen },
-    { id: "arcs", label: "Arcs", icon: LayoutGrid },
-    { id: "characters", label: "Characters", icon: Users },
-    { id: "notes", label: "Notes", icon: FileText },
-    { id: "files", label: "Files", icon: FolderOpen },
-] as const;
+export function AdminNavigation({ activeTab, onTabChange, templateId = "template_1", onSwitchToChat }: AdminNavigationProps) {
+    // Resolve Configuration based on Template
+    const isWriters = templateId === "template_love_writers";
+    const isTrade = templateId === "template_trade_ranking";
+    const isFurniture = templateId?.startsWith("template_furniture");
+    const isLogistics = templateId === "template_furniture_logistics";
+    const isLayout = templateId === "template_furniture_layout";
+    
+    // Theme Colors
+    const theme = {
+        primary: isTrade ? "emerald" : isWriters ? "pink" : isFurniture ? "sky" : "blue",
+        colorCode: isTrade ? "#10b981" : isWriters ? "#e11d48" : isFurniture ? "#0ea5e9" : "#2563eb",
+        bgLight: isTrade ? "bg-emerald-50" : isWriters ? "bg-pink-50" : isFurniture ? "bg-sky-50" : "bg-blue-50",
+        textPrimary: isTrade ? "text-emerald-600" : isWriters ? "text-pink-600" : isFurniture ? "text-sky-600" : "text-blue-600",
+        textHover: isTrade ? "hover:text-emerald-400" : isWriters ? "hover:text-pink-400" : isFurniture ? "hover:text-sky-400" : "hover:text-blue-400",
+        borderActive: isTrade ? "bg-emerald-600" : isWriters ? "bg-pink-600" : isFurniture ? "bg-sky-600" : "bg-blue-600",
+        shadow: isTrade ? "shadow-emerald-200" : isWriters ? "shadow-pink-200" : isFurniture ? "shadow-sky-200" : "shadow-blue-200",
+    };
 
-export function AdminNavigation({ activeTab, onTabChange }: AdminNavigationProps) {
+    const LogoIcon = isTrade ? FaGavel : isWriters ? BookOpen : isFurniture ? ShoppingBag : PieChart;
+
+    const navItems = [
+        ...(isWriters ? [{ id: "library", label: "Biblioteca", icon: Library }] : []),
+        ...(isTrade ? [{ id: "ranking", label: "Ranking", icon: FaGavel }] : []),
+        
+        // Furniture Hub
+        ...(isFurniture ? [
+            { id: "store", label: "Loja", icon: ShoppingBag },
+            { id: "logistics", label: "Painel Pedidos", icon: ClipboardList },
+            { id: "layout", label: "Mapa Loja", icon: MapIcon },
+            { id: "clients", label: "Clientes", icon: Users },
+            { id: "staff", label: "Equipe", icon: Shield },
+        ] : []),
+
+        { 
+            id: "arcs", 
+            label: isTrade ? "Análise" : isWriters ? "Arcos" : isFurniture ? "Insights" : "Dashboard", 
+            icon: LayoutGrid 
+        },
+        ...( !isFurniture ? [{ 
+            id: "characters", 
+            label: isWriters ? "Elenco" : "Contatos", 
+            icon: isTrade ? Shapes : Users 
+        }] : []),
+        { 
+            id: "notes", 
+            label: isFurniture ? "Relatórios" : "Notas", 
+            icon: FileText 
+        },
+        { id: "files", label: "Arquivos", icon: FolderOpen },
+    ] as const;
+
     return (
         <>
             {/* Desktop Sidebar */}
             <aside className="hidden md:flex flex-col w-20 border-r border-gray-100 bg-white h-screen sticky top-0 z-40 items-center py-6">
-                {/* Square Logo Placeholder */}
-                <div className="w-12 h-12 bg-pink-600 rounded-xl flex items-center justify-center text-white font-black text-xl mb-10 shadow-lg shadow-pink-200">
-                    LW
+                {/* Dynamic Logo */}
+                <div 
+                    className={cn(
+                        "w-12 h-12 rounded-xl flex items-center justify-center text-white shadow-lg mb-10 transition-colors duration-500",
+                        isTrade ? "bg-emerald-600 shadow-emerald-100" : 
+                        isWriters ? "bg-pink-600 shadow-pink-100" : 
+                        isLogistics ? "bg-sky-600 shadow-sky-100" :
+                        isLayout ? "bg-indigo-600 shadow-indigo-100" :
+                        "bg-blue-600 shadow-blue-100"
+                    )}
+                >
+                    <LogoIcon className="w-6 h-6" />
                 </div>
 
                 <nav className="flex flex-col gap-4 w-full px-2">
@@ -47,15 +117,15 @@ export function AdminNavigation({ activeTab, onTabChange }: AdminNavigationProps
                                     className={cn(
                                         "p-3 rounded-2xl transition-all duration-300 relative cursor-pointer",
                                         isActive 
-                                            ? "bg-pink-50 text-pink-600 shadow-inner" 
-                                            : "text-gray-400 hover:text-pink-400 hover:bg-gray-50"
+                                            ? `${theme.bgLight} ${theme.textPrimary} shadow-inner` 
+                                            : `text-gray-400 ${theme.textHover} hover:bg-gray-50`
                                     )}
                                 >
                                     <Icon className="w-6 h-6" />
                                     {isActive && (
                                         <motion.div 
                                             layoutId="activeSide"
-                                            className="absolute left-[-8px] top-3 bottom-3 w-1 bg-pink-600 rounded-full"
+                                            className={cn("absolute left-[-8px] top-3 bottom-3 w-1 rounded-full", theme.borderActive)}
                                         />
                                     )}
                                 </button>
@@ -69,6 +139,24 @@ export function AdminNavigation({ activeTab, onTabChange }: AdminNavigationProps
                         );
                     })}
                 </nav>
+
+                {onSwitchToChat && (
+                    <div className="mt-auto pb-4 px-2 w-full flex justify-center">
+                        <div className="relative group flex justify-center">
+                            <button
+                                onClick={onSwitchToChat}
+                                className="p-3 rounded-2xl transition-all duration-300 relative cursor-pointer text-blue-500 hover:bg-blue-50 bg-white border border-blue-100 shadow-sm"
+                            >
+                                <Sparkles className="w-6 h-6" />
+                            </button>
+                            {/* Tooltip */}
+                            <div className="absolute left-full ml-3 px-3 py-1.5 bg-gray-900 text-white text-xs font-bold rounded-lg opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity z-50 whitespace-nowrap shadow-xl">
+                                Modo Chat AI
+                                <div className="absolute left-[-4px] top-1/2 -translate-y-1/2 border-y-[4px] border-y-transparent border-r-[4px] border-r-gray-900" />
+                            </div>
+                        </div>
+                    </div>
+                )}
             </aside>
 
             {/* Mobile Bottom Menu (Floating) */}
@@ -85,7 +173,7 @@ export function AdminNavigation({ activeTab, onTabChange }: AdminNavigationProps
                                 className={cn(
                                     "p-3 rounded-2xl transition-all duration-300 relative flex flex-col items-center gap-1 cursor-pointer",
                                     isActive 
-                                        ? "text-pink-600" 
+                                        ? theme.textPrimary 
                                         : "text-gray-400"
                                 )}
                             >
@@ -93,12 +181,24 @@ export function AdminNavigation({ activeTab, onTabChange }: AdminNavigationProps
                                 {isActive && (
                                     <motion.div 
                                         layoutId="activeBottom"
-                                        className="absolute -bottom-1 w-1 h-1 bg-pink-600 rounded-full"
+                                        className={cn("absolute -bottom-1 w-1 h-1 rounded-full", theme.borderActive)}
                                     />
                                 )}
                             </button>
                         );
                     })}
+
+                    {onSwitchToChat && (
+                        <>
+                            <div className="w-px h-8 bg-gray-200 mx-1" />
+                            <button
+                                onClick={onSwitchToChat}
+                                className="p-3 rounded-2xl transition-all duration-300 relative flex flex-col items-center gap-1 cursor-pointer text-blue-500 hover:text-blue-600"
+                            >
+                                <Sparkles className="w-6 h-6" />
+                            </button>
+                        </>
+                    )}
                 </nav>
             </div>
         </>

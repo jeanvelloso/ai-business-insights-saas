@@ -14,8 +14,11 @@ import {
     Droplet,
     Info,
     Coins,
-    Trash2
+    Trash2,
+    Target,
+    Zap
 } from "lucide-react";
+import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
 import type { AdeAppearanceTokens } from "@/lib/ade-theme";
@@ -37,6 +40,7 @@ export interface AdminTopHeaderProps {
     onOpenWorkspaceDetail?: () => void;
     onDeleteWorkspace?: (workspaceId: string) => void;
     onSetSpecificColor?: (color: string) => void;
+    hideWorkspaceSwitcher?: boolean;
 }
 
 export function AdminTopHeader({
@@ -44,7 +48,8 @@ export function AdminTopHeader({
     onOpenSaaSLimits,
     onOpenWorkspaceDetail,
     onDeleteWorkspace,
-    onSetSpecificColor
+    onSetSpecificColor,
+    hideWorkspaceSwitcher
 }: AdminTopHeaderProps) {
     const [isWorkspaceOpen, setIsWorkspaceOpen] = useState(false);
     const [isDashboardOpen, setIsDashboardOpen] = useState(false);
@@ -69,13 +74,15 @@ export function AdminTopHeader({
     const availableWorkspaces = workspaces.map(ws => ({
         id: ws.id,
         name: ws.name,
-        type: ws.promptSettings?.templateId === "template_love_writers" ? 'love_writers' : 'business_insights'
+        type: ws.promptSettings?.templateId === "template_love_writers" ? 'love_writers' : 
+              ws.promptSettings?.templateId === "template_trade_ranking" ? 'trade_ranking' : 'business_insights'
     }));
 
     const activeWorkspaceDisplay = currentWorkspace ? {
         id: currentWorkspace.id,
         name: currentWorkspace.name,
-        type: isLoveWriters ? 'love_writers' : 'business_insights'
+        type: isLoveWriters ? 'love_writers' : 
+              currentWorkspace.promptSettings?.templateId === "template_trade_ranking" ? 'trade_ranking' : 'business_insights'
     } : { id: 'none', name: 'Select Workspace', type: 'business_insights' };
 
     const handleColorChange = (color: string) => {
@@ -94,20 +101,13 @@ export function AdminTopHeader({
         >
             <div className="container mx-auto px-4 md:px-6 py-4 flex items-center justify-between relative">
 
-                {/* Left: Brand */}
                 <div className="flex items-center gap-3">
-                    {/* Brand Logo / Name */}
-                    <div className="text-xl font-bold tracking-tight text-black flex items-center gap-2">
-                        {isLoveWriters ? (
-                            <span className="hidden md:block">Love Writers</span>
-                        ) : (
-                            <span className="hidden md:block">Business Insights</span>
-                        )}
-                    </div>
+                    {/* Brand Logo / Icons - Title removed as requested */}
                 </div>
 
                 {/* Center: Workspace Chooser - Hidden on mobile if needed, or adjusted */}
-                <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-30 transition-all duration-200 group/ws">
+                {!hideWorkspaceSwitcher && (
+                    <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-30 transition-all duration-200 group/ws">
                     <div className="relative flex items-center gap-1">
                         <button
                             onClick={() => setIsWorkspaceOpen(!isWorkspaceOpen)}
@@ -115,6 +115,8 @@ export function AdminTopHeader({
                         >
                             {activeWorkspaceDisplay.type === 'love_writers' ? (
                                 <BookOpen className="h-4 w-4 text-rose-500" />
+                            ) : activeWorkspaceDisplay.type === 'trade_ranking' ? (
+                                <Target className="h-4 w-4 text-emerald-500" />
                             ) : (
                                 <PieChart className="h-4 w-4 text-blue-500" />
                             )}
@@ -154,6 +156,8 @@ export function AdminTopHeader({
                                                     >
                                                         {ws.type === 'love_writers' ? (
                                                             <BookOpen className="h-4 w-4 text-rose-500" />
+                                                        ) : ws.type === 'trade_ranking' ? (
+                                                            <Target className="h-4 w-4 text-emerald-500" />
                                                         ) : (
                                                             <PieChart className="h-4 w-4 text-blue-500" />
                                                         )}
@@ -204,9 +208,11 @@ export function AdminTopHeader({
                         </AnimatePresence>
                     </div>
                 </div>
+                )}
 
 
                 {/* Right: Actions & User */}
+                {!hideWorkspaceSwitcher && (
                 <div className="flex items-center gap-2 z-20">
                     {/* Workspace Info Icon */}
                     {currentWorkspace && (
@@ -298,11 +304,24 @@ export function AdminTopHeader({
 
                     <div className="h-6 w-px bg-gray-200/20 mx-1" />
 
+                    {/* Mercado Livre Master Connection */}
+                    <Link 
+                        href="/api/auth/ml/login"
+                        className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-50 text-emerald-700 text-[10px] font-black uppercase tracking-widest hover:bg-emerald-100 transition-all border border-emerald-100"
+                        title="Connect Master Mercado Livre Account"
+                    >
+                        <Zap className="h-3 w-3" />
+                        ML Sync
+                    </Link>
+
+                    <div className="h-6 w-px bg-gray-200/20 mx-1" />
+
                     {/* Clerk User Button */}
                     <div className="ml-1 cursor-pointer">
                         <UserButton />
                     </div>
                 </div>
+                )}
             </div>
 
             {/* Book Writer Overlay Rendered within Layout Constraint */}
