@@ -37,6 +37,9 @@ import { ClientsBoard } from "@/components/admin/ade/ClientsBoard";
 import { StaffBoard } from "@/components/admin/ade/StaffBoard";
 import { FurnitureAnalyticsBoard } from "@/components/admin/ade/FurnitureAnalyticsBoard";
 import { AdminChatView } from "@/components/admin/chat/AdminChatView";
+import { ChatBoard } from "@/components/admin/ade/ChatBoard";
+import { VoiceAssistantOverlay } from "@/components/admin/chat/VoiceAssistantOverlay";
+import { SaaSLimitsModal } from "@/components/admin/ade/SaaSLimitsModal";
 
 // Zustand stores
 import {
@@ -55,7 +58,6 @@ import {
   useModalState,
   useAppearanceManagement,
   usePaymentFlow,
-  useGuestDataMigration,
   useFurnitureSystem,
 } from "@/containers/admin/hooks";
 
@@ -70,9 +72,29 @@ export function AdminContainer() {
   const { push } = useToast();
 
   // Zustand stores
-  const appearance = useUIStore((state) => state.appearance);
-  const modals = useUIStore((state) => state.modals);
-  const openSaaSLimits = useUIStore((state) => state.openSaaSLimits);
+  const { 
+    appearance, 
+    setBaseColor, 
+    modals, 
+    openSaaSLimits, 
+    closeSaaSLimits,
+    openAddPrompt,
+    closeAddPrompt,
+    openAddContact,
+    closeAddContact,
+    openCreateBlankDashboard,
+    closeCreateBlankDashboard,
+    openAddWorkspace,
+    closeAddWorkspace,
+    openBulkUpload,
+    closeBulkUpload,
+    openWorkspaceDetail,
+    closeWorkspaceDetail,
+    setSelectedTile,
+    setSelectedContact,
+    openPreview,
+    closePreview,
+  } = useUIStore();
   const auth = useAuthStore();
   const currentWorkspace = useCurrentWorkspace();
   const currentDashboard = useCurrentDashboard();
@@ -114,11 +136,20 @@ export function AdminContainer() {
   useEffect(() => {
     if (currentWorkspace?.promptSettings?.templateId?.startsWith("template_furniture")) {
         furniture.populateDefaults();
+        
+        // Expose handlers to window for AI access
+        (window as any).handleProductSubmitAI = furniture.handleProductSubmit;
+        (window as any).handleOrderSubmitAI = furniture.handleOrderSubmit;
     }
-  }, [currentWorkspace?.id]);
+    return () => {
+        delete (window as any).handleProductSubmitAI;
+        delete (window as any).handleOrderSubmitAI;
+    };
+  }, [currentWorkspace?.id, furniture.handleProductSubmit, furniture.handleOrderSubmit]);
 
   // Sequential Writer Logic (Client-Side Orchestration)
   const [isGenerating, setIsGenerating] = useState(false);
+  const [generationError, setGenerationError] = useState<string | null>(null);
 
   // Book Writer State
   const [openBookId, setOpenBookId] = useState<string | null>(null);
@@ -126,7 +157,79 @@ export function AdminContainer() {
 
   // Navigation State
   const [activeTab, setActiveTab] = useState<NavTab>("arcs");
-  const [viewMode, setViewMode] = useState<"chat" | "menu">("chat");
+  const [localViewMode, setLocalViewMode] = useState<"chat" | "menu" | null>(null);
+
+  const viewMode = localViewMode || currentDashboard?.layoutMode || "menu";
+  const setViewMode = (mode: "chat" | "menu") => {
+    setLocalViewMode(mode);
+    if (currentWorkspace && currentDashboard) {
+      workspaceActions.updateDashboard(currentWorkspace.id, currentDashboard.id, { layoutMode: mode });
+    }
+  };
+
+  // Expose setViewMode to window for voice assistant access
+  useEffect(() => {
+    (window as any).setViewModeAI = setViewMode;
+    return () => {
+      delete (window as any).setViewModeAI;
+    };
+  }, [setViewMode]);
+
+  // AI Voice Commands Event Listeners
+  useEffect(() => {
+    const handleNavigate = (e: CustomEvent) => {
+      const dest = e.detail?.destination;
+      if (!dest) return;
+      if (dest === 'chat') {
+        setViewMode('chat');
+        setActiveTab("chat_history" as NavTab);
+      } else if (dest === 'menu') {
+        setViewMode('menu');
+      } else if (['arcs', 'store', 'layout', 'logistics', 'clients', 'staff', 'notes', 'files', 'characters', 'library', 'ranking'].includes(dest)) {
+        setActiveTab(dest as NavTab);
+        setViewMode('menu');
+      } else if (dest === 'credits') {
+        openSaaSLimits();
+      } else if (dest === 'profile') {
+        const userBtn = document.querySelector('.cl-userButtonTrigger');
+        if (userBtn) (userBtn as HTMLElement).click();
+      }
+    };
+
+    const handleCreateClient = (e: CustomEvent) => {
+      setActiveTab('clients');
+      setViewMode('menu');
+      openAddContact();
+      push({
+         title: "Assistente de Voz",
+         description: `Iniciando cadastro do cliente: ${e.detail?.name}. Complete as informações.`,
+         variant: "default"
+      });
+    };
+
+    window.addEventListener('ai-navigate', handleNavigate as EventListener);
+    window.addEventListener('ai-create-client', handleCreateClient as EventListener);
+
+    return () => {
+      window.removeEventListener('ai-navigate', handleNavigate as EventListener);
+      window.removeEventListener('ai-create-client', handleCreateClient as EventListener);
+    };
+  }, [setViewMode, setActiveTab, openSaaSLimits, openAddContact, push]);
+
+  // Sync local view mode when dashboard changes
+  useEffect(() => {
+    if (currentDashboard?.layoutMode) {
+      setLocalViewMode(currentDashboard.layoutMode);
+    }
+  }, [currentDashboard?.id, currentDashboard?.layoutMode]);
+
+  // Sync Dashboard Background Color with UI Store
+  useEffect(() => {
+    if (currentDashboard?.bgColor && currentDashboard.bgColor !== appearance.baseColor) {
+      console.log(`[AdminContainer] 🎨 Syncing dashboard color: ${currentDashboard.bgColor}`);
+      setBaseColor(currentDashboard.bgColor);
+    }
+  }, [currentDashboard?.id, currentDashboard?.bgColor, setBaseColor, appearance.baseColor]);
 
   // Sync activeTab and template context
   useEffect(() => {
@@ -188,7 +291,11 @@ export function AdminContainer() {
       }
 
       const tiles = [...dashboardTiles].sort((a, b) => a.orderIndex - b.orderIndex);
-      const nextTile = tiles.find(t => !t.content || t.content.trim().length === 0);
+      const nextTile = tiles.find(t => 
+        (!t.content || t.content.trim().length === 0) && 
+        t.status !== "error" && 
+        t.status !== "completed"
+      );
 
       if (!nextTile) {
           console.log("[SequentialWriter] ✅ All tiles have content. Loop finished or waiting for next arcs.");
@@ -207,6 +314,12 @@ export function AdminContainer() {
       // 2b. Check Usage Limits
       if (!auth.canPerformAction("createTile")) {
           console.warn("[SequentialWriter] 🚫 Limit reached for createTile");
+          setGenerationError("Você atingiu o limite de geração de blocos para o seu plano.");
+          return;
+      }
+
+      if (generationError) {
+          console.log("[SequentialWriter] 🛑 Stopping due to previous error.");
           return;
       }
 
@@ -328,8 +441,42 @@ export function AdminContainer() {
           console.log(`[SequentialWriter] Completed tile: ${nextTile.title}`);
         }
 
-      } catch (e) {
+      } catch (e: any) {
         console.error("[SequentialWriter] Loop Error:", e);
+        const errorMsg = e.message || "Erro desconhecido na geração";
+        
+        // 1. Mark tile as failed in store so it's skipped in next cycle
+        useWorkspaceStore.getState().updateTileInDashboard(
+            capturedWorkspaceId,
+            capturedDashboardId,
+            nextTile.id,
+            { status: "error" },
+            nextTile
+        );
+
+        // 2. Mark as failed in DB if possible
+        if (auth.user?.id) {
+            updateTileMutation.mutate({
+                tileId: nextTile.id,
+                workspaceId: capturedWorkspaceId,
+                dashboardId: capturedDashboardId,
+                updates: { status: "error" }
+            });
+        }
+
+        // 3. Stop the loop and alert
+        setGenerationError(errorMsg);
+        setIsGenerating(false);
+        
+        const isQuotaError = errorMsg.toLowerCase().includes("quota") || errorMsg.includes("429");
+
+        push({
+            title: isQuotaError ? "Saldo OpenAI Insuficiente" : "Geração Interrompida",
+            description: isQuotaError 
+                ? "Sua conta da OpenAI (Platform) está sem saldo ou atingiu o limite. Verifique seu faturamento em platform.openai.com."
+                : errorMsg,
+            variant: "destructive"
+        });
       } finally {
         setIsGenerating(false);
       }
@@ -342,29 +489,8 @@ export function AdminContainer() {
 
   }, [currentWorkspace?.id, currentDashboard?.id, tilesWithContentCount, isGenerating, workspaces.length]); // Added workspaces.length to track new creations
 
-  // Auto-migrate guest data when user becomes a member
-  useGuestDataMigration();
-
   // UI actions from stores
-  const { setBaseColor } = useUIStore();
-  const {
-    openAddPrompt,
-    closeAddPrompt,
-    openAddContact,
-    closeAddContact,
-    openCreateBlankDashboard,
-    closeCreateBlankDashboard,
-    openAddWorkspace,
-    closeAddWorkspace,
-    openBulkUpload,
-    closeBulkUpload,
-    openWorkspaceDetail,
-    closeWorkspaceDetail,
-    setSelectedTile,
-    setSelectedContact,
-    openPreview,
-    closePreview,
-  } = useUIStore();
+  // (Consolidated at the top of the component)
 
   // Shared ref for dashboard updates (prevents race conditions)
   const isUpdatingDashboardRef = useRef(false);
@@ -650,32 +776,33 @@ export function AdminContainer() {
     <AdminShellAde
       appearance={appearance}
       chatOverlay={
-        viewMode === "chat" ? (
-          <AdminChatView
-            workspaces={workspaces}
-            currentWorkspace={currentWorkspace}
-            activeTab={activeTab}
-            onTabChange={setActiveTab}
-            onSetActiveWorkspace={(id) => {
-                const ws = workspaces.find((w) => w.id === id);
-                if (ws) workspaceActions.setCurrentWorkspace(ws);
-            }}
-            onSwitchToMenu={() => setViewMode("menu")}
-            onOpenWorkspaceDetail={() => openWorkspaceDetail(currentWorkspace?.id || "")}
-            onSetSpecificColor={handleSetBackground}
-            onOpenSaaSLimits={openSaaSLimits}
-          />
-        ) : null
+        <AdminChatView
+          workspaces={workspaces}
+          currentWorkspace={currentWorkspace}
+          activeTab={activeTab}
+          onTabChange={setActiveTab}
+          onSetActiveWorkspace={(id) => {
+              const ws = workspaces.find((w) => w.id === id);
+              if (ws) workspaceActions.setCurrentWorkspace(ws);
+          }}
+          viewMode={viewMode}
+          onSwitchToMenu={() => setViewMode("menu")}
+          onSwitchToChat={() => {
+              setViewMode("chat");
+              setActiveTab("chat_history" as NavTab);
+          }}
+          onOpenWorkspaceDetail={() => openWorkspaceDetail(currentWorkspace?.id || "")}
+          onSetSpecificColor={handleSetBackground}
+          onOpenSaaSLimits={openSaaSLimits}
+        />
       }
       navigation={
-        viewMode === "chat" ? null : (
-          <AdminNavigation 
-            activeTab={activeTab} 
-            onTabChange={setActiveTab} 
-            templateId={currentWorkspace?.promptSettings?.templateId}
-            onSwitchToChat={() => setViewMode("chat")}
-          />
-        )
+        <AdminNavigation 
+          activeTab={activeTab} 
+          onTabChange={setActiveTab} 
+          templateId={currentWorkspace?.promptSettings?.templateId}
+          onSwitchToChat={() => setViewMode("chat")}
+        />
       }
       // Top Header Props
       onOpenWorkspaceDetail={() => openWorkspaceDetail(currentWorkspace?.id || "")}
@@ -875,6 +1002,12 @@ export function AdminContainer() {
               {activeTab === "files" && (
                 <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
                   <FilesPlaceholderAde appearance={appearance} />
+                </div>
+              )}
+
+              {activeTab === "chat_history" && (
+                <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 h-[calc(100vh-120px)]">
+                  <ChatBoard workspace={currentWorkspace} dashboard={currentDashboard} />
                 </div>
               )}
 
@@ -1234,6 +1367,19 @@ export function AdminContainer() {
         usage={payment.usage}
         limits={payment.limits}
         stripeCheckoutUrl={payment.stripeCheckoutUrl}
+      />
+
+      {/* Modals */}
+      <SaaSLimitsModal
+        isOpen={modals.isSaaSLimitsOpen}
+        onClose={closeSaaSLimits}
+        appearance={appearance}
+      />
+
+      <VoiceAssistantOverlay 
+        workspace={currentWorkspace} 
+        dashboard={currentDashboard} 
+        onTabChange={setActiveTab}
       />
 
       {/* Book Reader Preview */}

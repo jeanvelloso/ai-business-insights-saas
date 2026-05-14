@@ -1,13 +1,16 @@
 import { useState, useCallback } from "react";
 import { useToast } from "@/lib/state/toast-context";
+import { useAuthStore, useUIStore } from "@/lib/stores";
 
 export interface WMSCommand {
-  action: 'CREATE_SECTOR' | 'DELETE_SECTOR' | 'PUTAWAY' | 'AUTO_PUTAWAY' | 'PICKING';
+  action: 'CREATE_SECTOR' | 'DELETE_SECTOR' | 'PUTAWAY' | 'AUTO_PUTAWAY' | 'PICKING' | 'CHANGE_COLOR' | 'NAVIGATE' | 'CREATE_CLIENT';
   id?: string;
   targetId?: string;
   rows?: number;
   cols?: number;
   orientation?: 'horizontal' | 'vertical';
+  type?: 'Wall' | 'Showcase' | 'Rack';
+  layoutMode?: 'boxed' | 'full';
   item?: {
     id?: string;
     name?: string;
@@ -19,13 +22,19 @@ export interface WMSCommand {
   };
   reason?: string;
   sku?: string;
+  color?: string;
+  destination?: string;
+  name?: string;
 }
 
 export interface Spot {
   id: string;
   code: string;
-  span: "short" | "long";
+  row: number;
+  col: number;
+  status: "available" | "occupied" | "reserved" | "blocked";
   products: any[];
+  updatedAt?: string;
 }
 
 export interface ActionLog {
@@ -41,6 +50,7 @@ export function useWMSOrchestrator(
   catalogProducts: any[] = []
 ) {
   const { push } = useToast();
+  const auth = useAuthStore();
    const [isProcessingAI, setIsProcessingAI] = useState(false);
    const [actionLogs, setActionLogs] = useState<ActionLog[]>([]);
    const [detectedItems, setDetectedItems] = useState<any[]>([]);
@@ -57,14 +67,18 @@ export function useWMSOrchestrator(
   }, []);
 
   const generateSpots = (sectorId: string, rows: number, cols: number) => {
-    const spots = [];
+    const spots: Spot[] = [];
+    const sectorPrefix = sectorId.replace('SEC-', '').charAt(0);
     for (let r = 1; r <= rows; r++) {
       for (let c = 1; c <= cols; c++) {
         spots.push({
           id: `${sectorId}-${r}-${c}`,
-          code: `${sectorId}-${r}-${c}`,
-          span: "short",
-          products: []
+          code: `${sectorPrefix}${r}${c}`,
+          row: r,
+          col: c,
+          status: "available",
+          products: [],
+          updatedAt: new Date().toISOString()
         });
       }
     }
@@ -82,7 +96,8 @@ export function useWMSOrchestrator(
           if (!currentSections.find(s => s.id === id)) {
             const newSec = {
               id,
-              type: "Showcase",
+              type: cmd.type || "Showcase",
+              layoutMode: cmd.layoutMode || "boxed",
               label: `Setor ${id}`,
               rows: cmd.rows || 4,
               cols: cmd.cols || 6,
@@ -184,6 +199,29 @@ export function useWMSOrchestrator(
           }));
           if (!found) logs.push(`Erro: Item ou posição não localizados para Picking.`);
         }
+        else if (cmd.action === 'CHANGE_COLOR') {
+          const { setBaseColor } = useUIStore.getState();
+          if (cmd.color) {
+            setBaseColor(cmd.color);
+            logActivity(`Cor da interface alterada para ${cmd.color}.`, 'info');
+            logs.push(`Alterou a cor para ${cmd.color}`);
+          }
+        }
+        else if (cmd.action === 'NAVIGATE') {
+          if (cmd.destination) {
+             const dest = cmd.destination.toLowerCase();
+             window.dispatchEvent(new CustomEvent('ai-navigate', { detail: { destination: dest } }));
+             logActivity(`Navegando para ${dest}.`, 'info');
+             logs.push(`Abriu a tela/painel ${dest}`);
+          }
+        }
+        else if (cmd.action === 'CREATE_CLIENT') {
+          if (cmd.name) {
+             window.dispatchEvent(new CustomEvent('ai-create-client', { detail: { name: cmd.name } }));
+             logActivity(`Cliente ${cmd.name} registrado.`, 'success');
+             logs.push(`Registrou cliente: ${cmd.name}`);
+          }
+        }
       } catch (e) {
         console.error("Error executing WMS command:", e);
         logs.push(`Erro ao processar comando: ${cmd.action}`);
@@ -197,14 +235,27 @@ export function useWMSOrchestrator(
   const callGeminiAI = async (input: string, images: any[] = []) => {
     setIsProcessingAI(true);
     try {
+      // Proactive credit check
+      if (!auth.canPerformAction("wmsAiAssistant")) {
+        push({ 
+          title: "Limite de Créditos", 
+          description: "Você não possui créditos suficientes para usar o Assistente AI.", 
+          variant: "destructive" 
+        });
+        return { reply: "Desculpe, você atingiu seu limite de créditos.", logs: [] };
+      }
       // Prompt construction from prototype
-      const prompt = `Você é uma IA de Sistema de Armazém (WMS MCP). Você deve interpretar o pedido do usuário e retornar EXATAMENTE UM JSON com duas chaves: "reply" (texto Markdown amigável respondendo o usuário) e "commands" (array de objetos de ação, vazio se for só conversa).
+      const prompt = `Você é uma IA de Sistema de Armazém e Gestão (WMS/ERP). Você deve interpretar o pedido do usuário e retornar EXATAMENTE UM JSON com duas chaves: "reply" (texto Markdown amigável respondendo o usuário) e "commands" (array de objetos de ação, vazio se for só conversa).
         
       Ações suportadas em 'commands':
-      1. { "action": "CREATE_SECTOR", "id": "A1", "rows": 4, "cols": 5, "orientation": "horizontal" }
+      1. { "action": "CREATE_SECTOR", "id": "A1", "rows": 4, "cols": 5, "orientation": "horizontal", "type": "Showcase", "layoutMode": "boxed" }
       2. { "action": "AUTO_PUTAWAY", "item": { "name": "...", "sku": "...", "price": "...", "condition": "...", "description": "..." } }
       3. { "action": "PUTAWAY", "targetId": "A1-1-1", "item": { ... } }
       4. { "action": "PICKING", "targetId": "A1-1-1", "sku": "...", "reason": "..." }
+      5. { "action": "CREATE_PRODUCT", "item": { "name": "...", "price": 100, "category": "...", "description": "..." } }
+      6. { "action": "CHANGE_COLOR", "color": "#HEX" } (IMPORTANTE: Sempre retorne uma cor em tom pastel BEM clarinho, "esbranquiçadinha", quase branca. Nunca use preto ou cores escuras/fortes diretas. Exemplo: se pedir vermelho, retorne um rosa bem claro como '#ffe1e1'. Se pedir escuro, use um cinza muito suave como '#f0f0f0' ou um azul bem sutil para manter contraste suave.)
+      7. { "action": "CREATE_CLIENT", "name": "Nome da pessoa" } (Extraia nomes corretos, exemplo "registre a cliente chamada Ana" -> "Ana", "cliente chamado Carlos" -> "Carlos")
+      8. { "action": "NAVIGATE", "destination": "DESTINO" } (Destinos válidos: 'chat', 'menu', 'layout', 'store', 'clients', 'notes', 'credits', 'profile')
       
       Aja naturalmente na chave "reply" e extraia os dados ricamente.`;
 
@@ -219,10 +270,15 @@ export function useWMSOrchestrator(
       if (!response.ok) throw new Error("AI Service Unavailable");
       
       const data = await response.json();
-      const logs = executeCommands(data.commands || []);
+      const commands = data.commands || [];
+      const logs = executeCommands(commands);
       
+      // Consume credits locally for UI sync
+      auth.consumeUsage("wmsAiAssistant");
+
       return {
         reply: data.reply,
+        commands,
         logs
       };
     } catch (error) {

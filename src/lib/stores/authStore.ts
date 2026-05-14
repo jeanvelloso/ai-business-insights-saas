@@ -7,7 +7,11 @@ export type GuestAction =
   | 'regenerate'
   | 'createContact'
   | 'createWorkspace'
-  | 'createTile';
+  | 'createTile'
+  | 'wmsAiAssistant'
+  | 'wmsInventoryCount'
+  | 'ordersCount'
+  | 'staffCount';
 
 export interface UsageResult {
   action: GuestAction;
@@ -47,16 +51,6 @@ interface AuthState {
   isGuest: boolean;
 }
 
-// Limites por tipo de usuário
-const GUEST_LIMITS: Record<GuestAction, number> = {
-  tileChat: 5,
-  contactChat: 5,
-  regenerate: 5,
-  createContact: 5,
-  createWorkspace: 3,
-  createTile: 20,
-};
-
 const MEMBER_LIMITS: Record<GuestAction, number> = {
   tileChat: 50,
   contactChat: 50,
@@ -64,6 +58,10 @@ const MEMBER_LIMITS: Record<GuestAction, number> = {
   createContact: 5,
   createWorkspace: 3,
   createTile: 20,
+  wmsAiAssistant: 50,
+  wmsInventoryCount: 100,
+  ordersCount: 100,
+  staffCount: 50,
 };
 
 const USAGE_VERSION = 2;
@@ -75,7 +73,7 @@ export const useAuthStore = create<AuthState>()(
       // Estado inicial
       user: null,
       isAuthenticated: false,
-      limits: GUEST_LIMITS,
+      limits: MEMBER_LIMITS,
       usage: {
         tileChat: 0,
         contactChat: 0,
@@ -83,6 +81,10 @@ export const useAuthStore = create<AuthState>()(
         createContact: 0,
         createWorkspace: 0,
         createTile: 0,
+        wmsAiAssistant: 0,
+        wmsInventoryCount: 0,
+        ordersCount: 0,
+        staffCount: 0,
       },
 
       // Getters computados (legacy compatibility)
@@ -100,15 +102,29 @@ export const useAuthStore = create<AuthState>()(
       canPerformAction: (action: string): boolean => {
         const { user, usage, limits } = get();
 
-        // Members têm acesso ilimitado
-        if (user?.role === 'member') return true;
+        // No access for non-members
+        if (user?.role !== 'member') return false;
 
-        // Guests verificam limites
-        const guestAction = action as GuestAction;
-        const currentUsage = usage[guestAction] || 0;
-        const limit = limits[guestAction] || 0;
+        // Member/Business logic: Enforce Credit Limits
+        // Cost map (mirrors backend usage-service.ts)
+        const costs: Record<string, number> = {
+            createTile: 5,
+            tileChat: 2,
+            contactChat: 2,
+            regenerate: 5,
+            createContact: 1,
+            createWorkspace: 10,
+            wmsAiAssistant: 5,
+            wmsInventoryCount: 1,
+            ordersCount: 2,
+            staffCount: 1,
+        };
 
-        return currentUsage < limit;
+        const cost = costs[action] || 0;
+        const total = (usage as any).creditsTotal || (limits as any).creditsTotal || 0;
+        const used = (usage as any).creditsUsed || 0;
+
+        return (used + cost) <= total;
       },
 
       evaluateUsage: (action: GuestAction): UsageResult => {
@@ -116,35 +132,71 @@ export const useAuthStore = create<AuthState>()(
 
         const used = usage[action] || 0;
         const limit = limits[action] || 0;
-        const allowed = user?.role === 'member' || used < limit;
-        const remaining = user?.role === 'member' ? Infinity : Math.max(0, limit - used);
+        
+        // Cost check for members
+        const costs: Record<string, number> = {
+            createTile: 5,
+            tileChat: 2,
+            contactChat: 2,
+            regenerate: 5,
+            createContact: 1,
+            createWorkspace: 10,
+            wmsAiAssistant: 5,
+            wmsInventoryCount: 1,
+            ordersCount: 2,
+            staffCount: 1,
+        };
+        const cost = costs[action] || 0;
+        const totalCredits = (usage as any).creditsTotal || (limits as any).creditsTotal || 0;
+        const usedCredits = (usage as any).creditsUsed || 0;
+
+        const allowed = user?.role === 'member' && (usedCredits + cost <= totalCredits);
+
+        const remaining = user?.role === 'member' 
+            ? Math.floor((totalCredits - usedCredits) / (cost || 1)) 
+            : 0;
 
         return {
           action,
           allowed,
           used,
           remaining,
-          limit: user?.role === 'member' ? Infinity : limit,
+          limit: user?.role === 'member' ? totalCredits : limit,
         };
       },
 
       consumeUsage: (action: GuestAction): UsageResult => {
         const { user, usage, limits } = get();
+        
+        const costs: Record<string, number> = {
+            createTile: 5,
+            tileChat: 2,
+            contactChat: 2,
+            regenerate: 5,
+            createContact: 1,
+            createWorkspace: 10,
+            wmsAiAssistant: 5,
+            wmsInventoryCount: 1,
+            ordersCount: 2,
+            staffCount: 1,
+        };
+        const cost = costs[action] || 0;
 
-        // Optimistic update for everyone (guests AND members)
+        // Optimistic update for everyone
         const newUsage = {
           ...usage,
           [action]: (usage[action] || 0) + 1,
+          creditsUsed: ((usage as any).creditsUsed || 0) + cost
         };
 
         set({ usage: newUsage });
 
         return {
           action,
-          allowed: true, // Já verificado anteriormente
+          allowed: true, 
           used: newUsage[action],
-          remaining: user?.role === 'member' ? Infinity : Math.max(0, (limits[action] || 0) - newUsage[action]),
-          limit: limits[action] || 0,
+          remaining: user?.role === 'member' ? Math.floor((((usage as any).creditsTotal || 0) - newUsage.creditsUsed) / (cost || 1)) : 0,
+          limit: (limits as any).creditsTotal || 0,
         };
       },
 
@@ -163,13 +215,17 @@ export const useAuthStore = create<AuthState>()(
             createContact: 0,
             createWorkspace: 0,
             createTile: 0,
+            wmsAiAssistant: 0,
+            wmsInventoryCount: 0,
+            ordersCount: 0,
+            staffCount: 0,
           }
         });
       },
 
       setUser: (user: { id?: string; role: 'guest' | 'member'; isPaid?: boolean } | null): void => {
         const isAuthenticated = !!user;
-        const limits = user?.role === 'member' ? MEMBER_LIMITS : GUEST_LIMITS;
+        const limits = MEMBER_LIMITS;
 
         set({
           user,
@@ -212,6 +268,10 @@ export const useAuthStore = create<AuthState>()(
               createContact: 0,
               createWorkspace: 0,
               createTile: 0,
+              wmsAiAssistant: 0,
+              wmsInventoryCount: 0,
+              ordersCount: 0,
+              staffCount: 0,
             }
           };
         }

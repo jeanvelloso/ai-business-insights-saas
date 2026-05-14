@@ -1,4 +1,5 @@
 import { db } from "@/lib/db/mongodb";
+import { cache } from "@/lib/cache/redis";
 import type { PlanDocument } from "@/lib/db/models/Plan";
 
 type PlanId = "guest" | "member" | "business";
@@ -23,7 +24,13 @@ export type UsageType =
   | "contactChatsCount"
   | "regenerationsCount"
   | "assetsCount"
-  | "bookGenerationsCount";
+  | "bookGenerationsCount"
+  | "marketEnrichmentCount"
+  | "imageGenerationsCount"
+  | "wmsInventoryCount"
+  | "wmsAiAssistant"
+  | "ordersCount"
+  | "staffCount";
 
 export interface UsageLimits {
   companiesCount: number; // Max workspaces per user
@@ -35,6 +42,12 @@ export interface UsageLimits {
   regenerationsCount: number; // Max regenerations
   assetsCount: number; // Max assets/uploads
   bookGenerationsCount?: number; // Max book generations
+  marketEnrichmentCount?: number; // Max market data enrichments
+  imageGenerationsCount?: number; // Max image generations
+  wmsInventoryCount?: number;
+  wmsAiAssistant?: number;
+  ordersCount?: number;
+  staffCount?: number;
   tokensUsed: number; // Max tokens per month
   creditsTotal: number; // Max available credits
 }
@@ -49,6 +62,12 @@ export const CREDIT_COSTS: Record<UsageType, number> = {
   regenerationsCount: 5,
   assetsCount: 1,
   bookGenerationsCount: 20, // generating a portion of a book costs 20 credits
+  marketEnrichmentCount: 5, // enrichment costs 5 credits
+  imageGenerationsCount: 100,
+  wmsInventoryCount: 1,
+  wmsAiAssistant: 5,
+  ordersCount: 2,
+  staffCount: 1,
   tokensUsed: 0,
 };
 
@@ -68,6 +87,13 @@ export const FREE_LIMITS: UsageLimits = {
   contactChatsCount: 20,
   regenerationsCount: 10,
   assetsCount: 0,
+  bookGenerationsCount: 5,
+  marketEnrichmentCount: 5,
+  imageGenerationsCount: 0,
+  wmsInventoryCount: 50,
+  wmsAiAssistant: 10,
+  ordersCount: 20,
+  staffCount: 10,
   tokensUsed: 3000,
   creditsTotal: 200, // Included initial credits
 };
@@ -81,22 +107,13 @@ export const SAFE_DEFAULT_MEMBER: UsageLimits = {
   contactChatsCount: 50,
   regenerationsCount: 20,
   assetsCount: 10,
+  bookGenerationsCount: 50,
+  marketEnrichmentCount: 100,
+  imageGenerationsCount: 10,
   tokensUsed: 10_000,
   creditsTotal: 10000, // Default Pro credits
 };
 
-export const SAFE_DEFAULT_GUEST: UsageLimits = {
-  companiesCount: 0,
-  contactsCount: 0,
-  notesCount: 0,
-  tilesCount: Number(process.env.GUEST_TILES_LIMIT) || 0,
-  tileChatsCount: 0,
-  contactChatsCount: 0,
-  regenerationsCount: 0,
-  assetsCount: 0,
-  tokensUsed: 0,
-  creditsTotal: 100, // Shadow Guests get 100 max equivalent
-};
 
 function getCachedLimits(planId: PlanId): UsageLimits | null {
   const cached = planCache.get(planId);
@@ -122,17 +139,19 @@ async function fetchPlanLimits(planId: PlanId): Promise<UsageLimits> {
       return record.limits;
     }
   } catch (err) {
-    console.warn("[usage-service] Failed to load plan from DB", {
+    console.warn("[usage-service] Failed to load plan from DB, using fallback", {
       planId,
       err,
     });
   }
 
-  throw new Error(`Plan ${planId} not found in DB and no fallback allowed`);
+  // Fallback if DB fetch failed or record is missing
+  if (planId === "business") return SAFE_DEFAULT_MEMBER;
+  return SAFE_DEFAULT_MEMBER;
 }
 
 function resolvePlanId(userDocPlan?: string, userId?: string | null): PlanId {
-  if (!userId) return "guest";
+  if (!userId) return "member"; // Default to member for safety if userId is missing but we're in member zone
   if (userDocPlan === "business") return "business";
   return "member";
 }
@@ -269,7 +288,8 @@ export async function incrementUsage(
  * Get current usage for a user
  */
 export async function getUsage(
-  userId: string
+  userId: string,
+  email?: string
 ): Promise<Record<string, number>> {
   if (!userId) {
     return {
@@ -288,9 +308,123 @@ export async function getUsage(
   }
 
   try {
-    const userDoc = await db.findOne("users", {
+    let userDoc = await db.findOne("users", {
       $or: [{ userId }, { clerkId: userId }]
     }) as any;
+
+    if (!userDoc) {
+      // 1. If we have an email, check if a user record already exists for it (Account Linking)
+      if (email) {
+        userDoc = await db.findOne("users", { email });
+        if (userDoc) {
+          console.log(`[UsageService] 🔗 Linking existing email profile ${email} to userId ${userId}`);
+          await db.updateOne("users", { _id: userDoc._id }, {
+            $set: { userId, clerkId: userId, updatedAt: new Date() }
+          });
+          // Refetch with new ID
+          userDoc = await db.findOne("users", { userId });
+        }
+      }
+
+      // 2. If still no userDoc, auto-provision
+      if (!userDoc && userId.startsWith("user_")) {
+        console.log(`[UsageService] 👤 Auto-provisioning new member profile for ${userId}`);
+        const newUser: any = {
+          userId,
+          clerkId: userId,
+          isMember: true,
+          plan: "member",
+          creditsTotal: 0,
+          creditsUsed: 0,
+          createdAt: new Date(),
+          updatedAt: new Date()
+        };
+        if (email) newUser.email = email;
+
+        try {
+          await db.updateOne("users", { userId }, { $set: newUser }, { upsert: true });
+          userDoc = await db.findOne("users", { userId });
+        } catch (provisionErr: any) {
+          // Final fallback for race conditions or duplicate email during upsert
+          if (provisionErr.code === 11000) {
+            userDoc = await db.findOne("users", { email });
+            if (userDoc) await db.updateOne("users", { _id: userDoc._id }, { $set: { userId, clerkId: userId } });
+          }
+        }
+      } else if (!userDoc) {
+        return {
+          companiesCount: 0,
+          contactsCount: 0,
+          notesCount: 0,
+          tilesCount: 0,
+          tileChatsCount: 0,
+          contactChatsCount: 0,
+          regenerationsCount: 0,
+          assetsCount: 0,
+          tokensUsed: 0,
+          creditsUsed: 0,
+          creditsTotal: 0,
+        };
+      }
+    }
+
+    // Auto-reconciliation logic:
+    // If user has purchases that aren't reflected in creditsTotal, update it.
+    let creditsTotal = userDoc?.creditsTotal || 0;
+
+    try {
+      const stripeCustomerId = userDoc?.stripeCustomerId;
+      const userEmail = userDoc?.email || email;
+
+      console.log(`[UsageService] 🔄 Reconciling credits for ${userId} (Email: ${userEmail}, StripeID: ${stripeCustomerId})`);
+
+      const purchases = await db.find("purchases", {
+        $or: [
+          { userId },
+          { clerkId: userId },
+          ...(stripeCustomerId ? [{ stripeCustomerId }] : []),
+          ...(userEmail ? [{ email: userEmail }] : []) // Try by email if it was stored
+        ]
+      }) as any[];
+
+      const totalFromPurchases = purchases.reduce((sum, p) => sum + (p.acquiredCredits || 0), 0);
+
+      let totalFromLedger = 0;
+      if (userEmail) {
+        const ledgerPurchases = await db.find("credit_transactions", {
+          email: userEmail,
+          usageType: "purchase_credits"
+        }) as any[];
+
+        if (ledgerPurchases.length > 0) {
+          totalFromLedger = ledgerPurchases.reduce((sum, p) => sum + (p.amount || 0), 0);
+          console.log(`[UsageService] 🔍 Found ${totalFromLedger} credits in ledger for ${userEmail}`);
+        }
+      }
+
+      const verifiedTotal = Math.max(totalFromPurchases, totalFromLedger);
+
+      // If the verified truth is higher than current total, heal the profile
+      if (verifiedTotal > creditsTotal) {
+        console.log(`[UsageService] 🟢 Auto-healing credits for ${userId}: ${creditsTotal} -> ${verifiedTotal}`);
+        await db.updateOne("users", { _id: userDoc._id }, {
+          $set: {
+            creditsTotal: verifiedTotal,
+            // Ensure email is saved in userDoc if it was missing
+            ...((!userDoc.email && userEmail) ? { email: userEmail } : {}),
+            // Also sync stripeCustomerId if we found one in purchases but not in userDoc
+            ...((!stripeCustomerId && purchases.find(p => p.stripeCustomerId)) ? { stripeCustomerId: purchases.find(p => p.stripeCustomerId).stripeCustomerId } : {})
+          }
+        });
+        creditsTotal = verifiedTotal;
+
+        // Invalidate cache so the next call sees the healed value
+        await cache.del(`usage:${userId}`);
+      }
+    } catch (reconcileErr) {
+      console.warn("[UsageService] Failed to reconcile credits", reconcileErr);
+    }
+
     return {
       companiesCount: userDoc?.companiesCount || 0,
       contactsCount: userDoc?.contactsCount || 0,
@@ -302,7 +436,7 @@ export async function getUsage(
       assetsCount: userDoc?.assetsCount || 0,
       tokensUsed: userDoc?.tokensUsed || 0,
       creditsUsed: userDoc?.creditsUsed || 0,
-      creditsTotal: userDoc?.creditsTotal || 0,
+      creditsTotal: creditsTotal,
     };
   } catch (error) {
     console.error("[UsageService] Error getting usage:", error);

@@ -2,7 +2,7 @@
 
 import { useState, useCallback } from "react";
 import { useToast } from "@/lib/state/toast-context";
-import { useContent, useWorkspaceActions } from "@/lib/stores";
+import { useContent, useWorkspaceActions, useAuthStore } from "@/lib/stores";
 
 interface Product {
     id: string;
@@ -29,10 +29,11 @@ interface Order {
     createdAt?: string;
 }
 
-export function useFurnitureSystem(currentDashboard: any, _currentWorkspace: any) {
+export function useFurnitureSystem(currentDashboard: any, currentWorkspace: any) {
   const { push } = useToast();
   const content = useContent();
   const workspaceActions = useWorkspaceActions();
+  const auth = useAuthStore();
 
   // State Management
   const [orderModalOpen, setOrderModalOpen] = useState(false);
@@ -103,6 +104,11 @@ export function useFurnitureSystem(currentDashboard: any, _currentWorkspace: any
         push({ title: "Erro de Sistema", description: "Painel ativo não encontrado.", variant: "destructive" });
         return;
     }
+
+    if (!auth.canPerformAction("ordersCount")) {
+        push({ title: "Limite de Créditos", description: "Você não possui créditos para criar pedidos.", variant: "destructive" });
+        return;
+    }
     
     const allTiles = currentDashboard.tiles || [];
     const ordersTile = allTiles.find((t: any) => t.category === "orders");
@@ -123,6 +129,7 @@ export function useFurnitureSystem(currentDashboard: any, _currentWorkspace: any
 
     const success = await updateMetadata("orders", "orders", updatedList);
     if (success) {
+        auth.consumeUsage("ordersCount");
         push({ title: orderData.id ? "Order Updated" : "Order Created", variant: "success" });
     }
   }, [currentDashboard, updateMetadata, push]);
@@ -170,6 +177,11 @@ export function useFurnitureSystem(currentDashboard: any, _currentWorkspace: any
         push({ title: "Erro de Sistema", description: "Painel ativo não encontrado.", variant: "destructive" });
         return;
     }
+
+    if (!auth.canPerformAction("wmsInventoryCount")) {
+        push({ title: "Limite de Créditos", description: "Você não possui créditos para adicionar produtos.", variant: "destructive" });
+        return;
+    }
     
     const allTiles = currentDashboard.tiles || [];
     const productTile = allTiles.find((t: any) => t.category === "products");
@@ -194,6 +206,7 @@ export function useFurnitureSystem(currentDashboard: any, _currentWorkspace: any
     // Use the core updateMetadata for maximum reliability
     const success = await updateMetadata("products", "products", updatedList);
     if (success) {
+        auth.consumeUsage("wmsInventoryCount");
         push({ title: "Catalog Updated", description: `${productData.name} saved.`, variant: "success" });
         setProductModalOpen(false);
         setEditingProduct(null);
@@ -206,17 +219,17 @@ export function useFurnitureSystem(currentDashboard: any, _currentWorkspace: any
         return;
     }
     
-    // Intelligent Routing based on Assembly requirement
+    // 1. Intelligent Routing based on Assembly requirement
     const initialStatus = "Nova Solicitação";
 
-    // 1. Create Lead Note
+    // 2. Create Lead Note
     await content.createNote(currentDashboard.id, {
         title: `Novo Orçamento: ${product.name}`,
         content: `Lead da Vitrine Pública.\nProduto: ${product.name}\nValor Ofertado: R$ ${product.price}\nMontagem: ${product.requiresAssembly ? "Sim" : "Não"}\nData: ${new Date().toLocaleString()}`,
         category: "lead"
     });
 
-    // 2. Add to KDS (Orders)
+    // 3. Add to KDS (Orders)
     await handleOrderSubmit({
         clientName: "Lead da Vitrine",
         product: product.name,
@@ -227,16 +240,31 @@ export function useFurnitureSystem(currentDashboard: any, _currentWorkspace: any
         orderNumber: Math.floor(100000 + Math.random() * 900000).toString()
     });
 
+    // 4. WhatsApp Integration
+    const whatsappVar = currentWorkspace?.promptSettings?.promptVariables?.find((v: string) => v.startsWith("whatsapp:"));
+    const whatsappNumber = whatsappVar ? whatsappVar.split(":")[1] : null;
+
+    if (whatsappNumber) {
+        const cleanNumber = whatsappNumber.replace(/\D/g, "");
+        const text = encodeURIComponent(`Olá! Tenho interesse no produto: ${product.name} (Valor: R$ ${product.price}). Gostaria de receber um orçamento.`);
+        window.open(`https://wa.me/${cleanNumber}?text=${text}`, "_blank");
+    }
+
     push({ 
         title: "Orçamento Criado", 
-        description: `O pedido de orçamento foi enviado para o painel de vendas.`, 
+        description: whatsappNumber ? "Redirecionando para o WhatsApp..." : "O pedido de orçamento foi enviado para o painel de vendas.", 
         variant: "success" 
     });
-  }, [currentDashboard, content, handleOrderSubmit, push]);
+  }, [currentDashboard, currentWorkspace, content, handleOrderSubmit, push]);
 
   const handleStaffSubmit = useCallback(async (staffData: any) => {
     if (!currentDashboard) {
         push({ title: "Erro de Sistema", description: "Painel ativo não encontrado.", variant: "destructive" });
+        return;
+    }
+
+    if (!auth.canPerformAction("staffCount")) {
+        push({ title: "Limite de Créditos", description: "Você não possui créditos para adicionar membros da equipe.", variant: "destructive" });
         return;
     }
     const allTiles = currentDashboard.tiles || [];
@@ -251,7 +279,10 @@ export function useFurnitureSystem(currentDashboard: any, _currentWorkspace: any
         updatedList = [...staffList, { ...staffData, id: `staff_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`, createdAt: new Date().toISOString() }];
     }
     const success = await updateMetadata("staff", "staff", updatedList);
-    if (success) push({ title: "Staff Member Saved", variant: "success" });
+    if (success) {
+        auth.consumeUsage("staffCount");
+        push({ title: "Staff Member Saved", variant: "success" });
+    }
   }, [currentDashboard, updateMetadata, push]);
 
   const handleSaveLayout = useCallback(async (sections: any[]) => {

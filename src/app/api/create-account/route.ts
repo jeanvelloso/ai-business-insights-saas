@@ -97,20 +97,20 @@ export async function POST(req: NextRequest) {
       } catch (e) { console.error("[create-account] customer fetch failed:", e); }
     }
 
-    if (!targetUserId) {
-      if (email) {
-        const existingUser = await db.findOne<UserDocument>("users", { email });
-        if (existingUser) {
-          targetUserId = existingUser.userId || existingUser.clerkId;
-          console.log(`[create-account] Resolved TargetUser via email mapping: ${targetUserId}`);
-        }
+    if (!targetUserId && email) {
+      const existingUser = await db.findOne<UserDocument>("users", { email });
+      if (existingUser) {
+        targetUserId = existingUser.userId || existingUser.clerkId;
+        console.log(`[create-account] Resolved TargetUser via email mapping: ${targetUserId}`);
       }
+    }
 
-      if (!targetUserId) {
-        const { randomUUID } = await import("crypto");
-        targetUserId = `guest_${randomUUID()}`;
-        console.log(`[create-account] Generated anonymous TargetUser: ${targetUserId}`);
-      }
+    if (!targetUserId) {
+      console.warn(`[create-account] ❌ Could not resolve any TargetUser for session ${sessionId}. Aborting.`);
+      return NextResponse.json(
+        { error: "Authentication required: Please sign in to link your purchase." },
+        { status: 401 }
+      );
     }
 
     console.log(`[create-account] Processing for TargetUser: ${targetUserId} (Clerk: ${clerkUserId}, Stripe: ${stripeUserId})`);
@@ -124,10 +124,10 @@ export async function POST(req: NextRequest) {
 
     // 2. Update or Create User
     console.log(`[create-account] Step 2: Updating user ${targetUserId}`);
+    let userDetails: any = {};
     try {
       // Fetch full user details from Clerk to ensure we have name/image
       const { clerkClient } = await import("@clerk/nextjs/server");
-      let userDetails: any = {};
 
       if (clerkUserId) {
         try {
@@ -218,6 +218,20 @@ export async function POST(req: NextRequest) {
               }
             }
           );
+
+          // [CRITICAL FIX] Ensure credits are merged if separate docs existed
+          if (targetUserId && oldUserId && targetUserId !== oldUserId) {
+            console.log(`[create-account] Merging credit balance from ${oldUserId} to ${targetUserId}`);
+            const oldUser = await db.findOne("users", { userId: oldUserId }) as any;
+            if (oldUser) {
+               await db.updateOne("users", { userId: targetUserId }, {
+                 $inc: { 
+                   creditsTotal: oldUser.creditsTotal || 0,
+                   creditsUsed: oldUser.creditsUsed || 0
+                 }
+               });
+            }
+          }
         }
       } else {
         // Log but continue to allow purchase recording if possible? 
@@ -250,6 +264,17 @@ export async function POST(req: NextRequest) {
           acquiredCredits
         });
         console.log(`[create-account] Purchase recorded and credits distributed. ID: ${purchaseResult}`);
+
+        // 4. Log credit transaction for ledger tracking
+        await db.insertOne("credit_transactions", {
+          userId: targetUserId,
+          email: email || userDetails.email || undefined,
+          usageType: "purchase_credits",
+          amount: acquiredCredits,
+          creditsCost: 0,
+          stripeSessionId: sessionId,
+          createdAt: new Date(),
+        });
       } else {
         console.log(`[create-account] Purchase ${sessionId} already processed by webhook. Skipping credit distribution.`);
       }
@@ -275,7 +300,7 @@ export async function POST(req: NextRequest) {
 
     const planInfo = await getPlanForUser(targetUserId);
 
-    const response = NextResponse.json(
+    return NextResponse.json(
       {
         success: true,
         plan,
@@ -288,14 +313,6 @@ export async function POST(req: NextRequest) {
         headers: { "Cache-Control": "no-store" },
       }
     );
-
-    response.cookies.set("guest_user_id", targetUserId, {
-      path: "/",
-      maxAge: 60 * 60 * 24 * 365,
-      sameSite: "lax",
-    });
-
-    return response;
   } catch (error) {
     console.error("[create-account] Error confirming membership:", error);
     // return detailed error in dev
